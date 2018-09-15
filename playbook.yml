@@ -1,0 +1,236 @@
+---
+# This assumes the vpc settings, subnets, and amis are known in advance.
+# In reality they would be registered by earlier tasks.
+
+
+- name: Create elb group
+  ec2_group:
+    name: "webserver-elb-group"
+    description: sg for elb
+    vpc_id: vpc-xxxxxxxx
+    profile: "{{ aws_profile }}"
+    region: '{{ region }}'
+    rules:
+      - proto: tcp
+        ports:
+        - 80
+        - 443
+        cidr_ip: 0.0.0.0/0
+    register: elb-sg
+
+
+- name: Create webserver group
+  ec2_group:
+    name: "webserver-group"
+    description: sg for webserver
+    vpc_id: vpc-xxxxxxxx
+    profile: "{{ aws_profile }}"
+    region: '{{ region }}'
+    rules:
+      - proto: tcp
+        ports:
+        - 80
+        - 443
+        group_name: 'webserver-elb-group'
+      - proto: tcp
+        ports:
+        - 22
+        cidr_ip: 10.0.0.0/8
+    register: webserver-sg
+
+- name: Create redis group
+  ec2_group:
+    name: "redis-group"
+    description: sg for redis
+    vpc_id: vpc-xxxxxxxx
+    profile: "{{ aws_profile }}" 
+    region: '{{ region }}'
+    rules:
+      - proto: tcp
+        ports:
+        - 6379
+        group_name: 'webserver-group'
+      - proto: tcp
+        ports:
+        - 22
+        cidr_ip: 10.0.0.0/8
+      - proto: tcp
+        ports:
+        - 6379
+        cidr_ip: 10.0.0.0/8
+    register: redis-sg
+
+- name: Create mysql group
+  ec2_group:
+    name: "mysql-group"
+    description: sg for mysql
+    vpc_id: vpc-xxxxxxxx
+    profile: "{{ aws_profile }}" 
+    region: '{{ region }}'
+    rules:
+      - proto: tcp
+        ports:
+        - 3306
+        group_name: 'webserver-group'
+      - proto: tcp
+        ports:
+        - 22
+        cidr_ip: 10.0.0.0/8
+      - proto: tcp
+        ports:
+        - 6379
+        cidr_ip: 10.0.0.0/8
+    register: mysql-sg
+
+- name: Create bucket for web server
+  s3_bucket:
+    name: nbc-webserver-bucket
+
+- name: Create bucket for elb logs
+  s3_bucket:
+    name: nbc-log-bucket
+
+- name: Create ELB for webservers
+  local_action:
+    module: ec2_elb_lb
+    state: present
+    name: 'webserver-elb'
+    security_group_ids: {{ elb-sg.something.from.facter }}
+    region: '{{ region }}'
+    subnets: 'subnet-xxxxx,subnet-xxxxx'
+    purge_subnets: yes
+    health_check:
+        ping_protocol: http # options are http, https, ssl, tcp
+        ping_port: 80
+        ping_path: "/index.html" # not required for tcp or ssl
+        response_timeout: 5 # seconds
+        interval: 10 # seconds
+        unhealthy_threshold: 5
+        healthy_threshold: 3
+    access_logs:
+        interval: 5 # minutes (defaults to 60)
+        s3_location: "nbc-log-bucket" # This value is required if access_logs is set
+        s3_prefix: "logs"
+    listeners:
+      - protocol: http
+        load_balancer_port: 80
+        instance_port: 80
+      - protocol: https
+        load_balancer_port: 443
+        instance_port: 443
+        ssl_certificate_id: "{{ webserver_cert_id }}" 
+    register: webserver_elb
+
+- name: Make MySQL DB
+  rds:
+    command: create
+    instance_name: new-database
+    db_engine: MySQL
+    region: "{{ region }}"
+    size: "{{mysql_size}}"
+    instance_type: "{{ mysql_instance_type }}"
+    username: "{{ mysql_user }}"
+    password: "{{ mysql_pass }}"
+    subnet: 'subnet-xxxxxx'
+    security_groups: 'mysql-group'
+    backup_retention: 14
+    multi_zone: yes
+    tags:
+      Environment: testing
+      Application: webserver
+    wait: yes
+    wait_timeout: 600
+
+- name: Create S3 read only role
+  iam_role:
+    name: S3_Read_Only_Webserver
+    assume_role_policy_document: "{{ lookup('file','s3-policy.json') }}"
+    description: A role  for the bucket that only members of the webserver group can read from
+
+- name: Create Redis Role
+  iam_role:
+    name: Redis
+    assume_role_policy_document: "{{ lookup('file','redis-policy.json') }}"
+    description: A placeholder b/c roles can only be attached at creation
+
+- name: Start redis instance
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    image_id:
+      - 'ami-xxxxxx'
+    region: us-east-1
+  tasks:
+    - name: Start the redis instance
+      ec2:
+        key_name: mykey
+        instance_type: t2.micro
+        image: '{{ image_id }}'
+        region: '{{ region }}'
+        state: running
+        wait: True
+        count: 1
+        instance_tags:
+          Role: redis 
+        vpc_subnet_id: subnet-xxxxxx
+        assign_public_ip: no
+        wait_timeout: 500
+        instance_profile_name: Redis
+        group: 'redis-group'
+        id: "{{ range(1, 99999) | random }}" # make it idempotent
+  roles:
+    - redis
+
+- name: Start webserver instances
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    image_id:
+      - 'ami-xxxxxx'
+    region: us-east-1
+    subnets:
+      - { zone: "us-east-1a", vpc_subnet: "subnet-xxxxxx"}
+      - { zone: "us-east-1b", vpc_subnet: "subnet-xxxxxx"}
+      - { zone: "us-east-1c", vpc_subnet: "subnet-xxxxxx"}
+  pre_tasks:
+    - name: Gathering ec2 facts
+      action: ec2_facts
+    - name: Instance De-register
+      local_action:
+        module: ec2_elb
+        instance_id: "{{ ansible_ec2_instance_id }}"
+        state: absent
+  tasks:
+    - name: Start the web instances
+      with_items: "{{ subnets }}"
+      ec2:
+        instance_ids: '{{ web_instance_ids }}'
+        region: '{{ region }}'
+        state: running
+        key_name: mykey
+        instance_type: "{{ web_instance_types }}"
+        image: "{{image_id}}"
+        exact_count: 1
+        wait: True
+        instance_tags:
+          Role: webserver 
+        vpc_subnet_id: "{{ item.vpc_subnet }}"
+        zone: "{{ item.zone }}"
+        assign_public_ip: yes
+        wait_timeout: 500
+        instance_profile_name: S3_Read_Only_Webserver
+        group: 'webserver-group'
+        id: "{{ range(1, 99999) | random }}" # make it idempotent
+  roles:
+    - webserver
+  post_tasks:
+    - name: Instance Register
+      local_action:
+        module: ec2_elb
+        instance_id: "{{ ansible_ec2_instance_id }}"
+        ec2_elbs: "{{ webserver_elb.resource_id.from.factor }}"
+        state: present
+
+

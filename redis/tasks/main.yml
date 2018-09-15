@@ -1,0 +1,10 @@
+---
+# tasks file for redis
+
+- name: "Install Redis"
+  yum: name={{item}} state=present
+  with_items:
+    - redis
+
+- name: "(Re)Start Redis"
+  service: name=redis state=restarted
