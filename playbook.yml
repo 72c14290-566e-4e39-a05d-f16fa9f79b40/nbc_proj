@@ -31,7 +31,7 @@
         ports:
         - 80
         - 443
-        group_name: 'webserver-elb-group'
+        group_name: 'webserver-group'
       - proto: tcp
         ports:
         - 22
