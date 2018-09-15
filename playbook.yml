@@ -168,9 +168,8 @@
         instance_type: t2.micro
         image: '{{ image_id }}'
         region: '{{ region }}'
-        state: running
         wait: True
-        count: 1
+        exact_count: 1
         instance_tags:
           Role: redis 
         vpc_subnet_id: subnet-xxxxxx
@@ -206,12 +205,10 @@
     - name: Start the web instances
       with_items: "{{ subnets }}"
       ec2:
-        instance_ids: '{{ web_instance_ids }}'
-        region: '{{ region }}'
-        state: running
         key_name: mykey
-        instance_type: "{{ web_instance_types }}"
-        image: "{{image_id}}"
+        instance_type: t2.micro
+        image: '{{ image_id }}'
+        region: '{{ region }}'
         exact_count: 1
         wait: True
         instance_tags:
