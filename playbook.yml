@@ -78,7 +78,7 @@
         cidr_ip: 10.0.0.0/8
       - proto: tcp
         ports:
-        - 6379
+        - 3306
         cidr_ip: 10.0.0.0/8
     register: mysql-sg
 
