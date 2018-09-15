@@ -14,7 +14,7 @@ For this project, I tried to focus on getting the basic best practices in place,
 * Logging is enabled for the ELB
 * Instances join to the ELB at runtime
 
-### Things I didn't do, or did poorly
+### Things I skipped in the interest of time, or could have improved
 
 To make this close to runnable there are alot of things which need doing
 * I didn't template many things which are rightly variables
@@ -22,13 +22,14 @@ To make this close to runnable there are alot of things which need doing
 * I didn't write the IAM policy files for the machines
 * I didn't have or follow a great naming convention
 * I didn't put in enough tags
+* Too much yank and paste, should be DRYer (i.e with\_items for buckets and security groups, a role for instances)
 
 ### Assumptions I made
 
 I assumed many things existed outside of this project, or were designed in a specific way
 * SSH keys
 * VPC
-* Subnets exist
+* Public and Private Subnets exist
 * redis is a cache for mysql and doesn't need to be HA
 
 
@@ -38,10 +39,11 @@ I assumed many things existed outside of this project, or were designed in a spe
 1. Create security groups for ELB and webserver nodes
 2. Create bucket for ELB logs
 3. Create ELB
-4. Create 3 nodes in 3 different AZs
-5. Install dependencies
-6. Start httpd
-7. Add nodes into ELB
+4. Create Role for s3
+5. Create 3 nodes in 3 different AZs with role attached
+6. Install dependencies
+7. Start httpd
+8. Add nodes into ELB
 
 
 #### A Redis installation accessible by the web servers
